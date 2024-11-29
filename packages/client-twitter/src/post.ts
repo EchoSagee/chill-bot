@@ -2,7 +2,7 @@ import { Tweet } from "agent-twitter-client";
 import {
     composeContext,
     generateText,
-    getEmbeddingZeroVector,
+    embeddingZeroVector,
     IAgentRuntime,
     ModelClass,
     stringToUuid,
@@ -10,6 +10,52 @@ import {
 } from "@ai16z/eliza";
 import { elizaLogger } from "@ai16z/eliza";
 import { ClientBase } from "./base.ts";
+import { generateChillGuyMeme } from "./utils";
+
+const chillGuyMemeTemplate = `{{timeline}}
+
+# Knowledge Base
+{{knowledge}}
+
+About the Chill Guy Character:
+Name: {{agentName}}
+Social Handle: @{{twitterUserName}}
+Personality: {{bio}}
+Background Story: {{lore}}
+Style Guidelines: {{postDirections}}
+
+{{providers}}
+
+Previous Memes Generated:
+{{recentPosts}}
+
+Reference Meme Examples:
+{{characterPostExamples}}
+
+# Task: Generate a "Chill Guy" Meme in the style of {{agentName}}
+Create a two-part meme where:
+
+Top Text:
+- Write an exaggerated, stressful, or complex situation (max 50 characters)
+- Should relate to {{topic}} without directly mentioning it
+- Match the voice of {{agentName}}
+- Must be {{adjective}} in tone
+
+Bottom Text:
+- Must include a laid-back, relaxed response
+- Should start with "But" or similar transition
+- Emphasize the "chill" attitude
+- Keep within character voice
+
+Format Requirements:
+- No emojis
+- No questions
+- Brief, concise statements only
+- Return in JSON format with 'topText' and 'bottomText' fields
+- Each line maximum 50 characters
+- Use different scenarios than previous posts
+
+Do not add commentary or acknowledge this request - output JSON response only.`;
 
 const twitterPostTemplate = `{{timeline}}
 
@@ -172,45 +218,28 @@ export class TwitterPostClient {
 
             const context = composeContext({
                 state,
-                template:
-                    this.runtime.character.templates?.twitterPostTemplate ||
-                    twitterPostTemplate,
+                template: chillGuyMemeTemplate,
             });
 
             elizaLogger.debug("generate post prompt:\n" + context);
 
             const newTweetContent = await generateText({
                 runtime: this.runtime,
-                context,
+                context: context,
                 modelClass: ModelClass.SMALL,
             });
-
-            // Replace \n with proper line breaks and trim excess spaces
-            const formattedTweet = newTweetContent
-                .replaceAll(/\\n/g, "\n")
-                .trim();
-
-            // Use the helper function to truncate to complete sentence
-            const content = truncateToCompleteSentence(formattedTweet);
-
-            if (this.runtime.getSetting("TWITTER_DRY_RUN") === "true") {
-                elizaLogger.info(
-                    `Dry run: would have posted tweet: ${content}`
-                );
-                return;
-            }
+            const memeResponse = JSON.parse(newTweetContent);
+            const memeImage = await generateChillGuyMeme(memeResponse.topText, memeResponse.bottomText);
 
             try {
-                elizaLogger.log(`Posting new tweet:\n ${content}`);
-
                 const result = await this.client.requestQueue.add(
                     async () =>
-                        await this.client.twitterClient.sendTweet(content)
+                        await this.client.twitterClient.sendTweetWithMedia('', [memeImage])
                 );
                 const body = await result.json();
                 if (!body?.data?.create_tweet?.tweet_results?.result) {
-                    console.error("Error sending tweet; Bad response:", body);
-                    return;
+                  console.error("Error sending tweet; Bad response:", body);
+                  return;
                 }
                 const tweetResult = body.data.create_tweet.tweet_results.result;
 
@@ -267,7 +296,7 @@ export class TwitterPostClient {
                         source: "twitter",
                     },
                     roomId,
-                    embedding: getEmbeddingZeroVector(this.runtime),
+                    embedding: embeddingZeroVector,
                     createdAt: tweet.timestamp * 1000,
                 });
             } catch (error) {
